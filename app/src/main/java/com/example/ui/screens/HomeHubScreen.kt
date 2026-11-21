@@ -26,8 +26,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Star
@@ -88,6 +91,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -95,6 +99,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.ui.toggleScreenOrientation
 import com.example.data.CampaignLevels
 import com.example.data.CampaignProgressDoc
 import com.example.data.CommunityLevelDoc
@@ -162,12 +167,15 @@ fun HomeHubScreen(
         }
     }
 
+    val context = LocalContext.current
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(NeonVoid)
     ) {
-        val isWide = maxWidth >= 700.dp
+        val isLandscape = maxWidth > maxHeight
+        val isWide = isLandscape || maxWidth >= 600.dp
 
         Scaffold(
             containerColor = NeonVoid,
@@ -219,6 +227,19 @@ fun HomeHubScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            IconButton(
+                                onClick = { toggleScreenOrientation(context, isLandscape) },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("hub_rotate_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ScreenRotation,
+                                    contentDescription = if (isLandscape) "Cambiar a vertical" else "Jugar en horizontal",
+                                    tint = NeonCyan
+                                )
+                            }
+
                             Surface(
                                 color = if (isCloudConnected) NeonLime.copy(alpha = 0.14f) else NeonSurfaceVariant,
                                 shape = RoundedCornerShape(12.dp),
@@ -658,6 +679,7 @@ private fun CommunityTabContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally

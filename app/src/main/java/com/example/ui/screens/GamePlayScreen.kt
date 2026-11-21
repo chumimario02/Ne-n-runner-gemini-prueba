@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,8 +22,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Verified
@@ -57,10 +61,18 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +83,7 @@ import com.example.game.GameEngine
 import com.example.game.GameHudSnapshot
 import com.example.game.GameStatus
 import com.example.model.LevelData
+import com.example.ui.toggleScreenOrientation
 import com.example.ui.theme.NeonAmber
 import com.example.ui.theme.NeonCardBorder
 import com.example.ui.theme.NeonCrimson
@@ -94,6 +107,9 @@ fun GamePlayScreen(
 ) {
     BackHandler(onBack = onExit)
 
+    val context = LocalContext.current
+    val focusRequester = remember { FocusRequester() }
+
     val engine = remember(level) { GameEngine(level) }
     var hud by remember(level) { mutableStateOf(engine.snapshot()) }
     var frameTick by remember { mutableLongStateOf(0L) }
@@ -101,10 +117,19 @@ fun GamePlayScreen(
 
     var leftPressed by remember { mutableStateOf(false) }
     var rightPressed by remember { mutableStateOf(false) }
+    var keyLeftPressed by remember { mutableStateOf(false) }
+    var keyRightPressed by remember { mutableStateOf(false) }
     var jumpPressed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(leftPressed, rightPressed) {
-        engine.setDirectionalInput(leftPressed, rightPressed)
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    LaunchedEffect(leftPressed, rightPressed, keyLeftPressed, keyRightPressed) {
+        engine.setDirectionalInput(
+            left = leftPressed || keyLeftPressed,
+            right = rightPressed || keyRightPressed
+        )
     }
 
     LaunchedEffect(level, hud.status) {
@@ -133,13 +158,55 @@ fun GamePlayScreen(
         hud = engine.snapshot()
     }
 
+    fun togglePause() {
+        engine.status = if (engine.status == GameStatus.PAUSED) {
+            GameStatus.PLAYING
+        } else if (engine.status == GameStatus.PLAYING) {
+            GameStatus.PAUSED
+        } else engine.status
+        hud = engine.snapshot()
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(NeonVoid)
             .windowInsetsPadding(WindowInsets.safeDrawing)
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { keyEvent ->
+                val isDown = keyEvent.type == KeyEventType.KeyDown
+                val isUp = keyEvent.type == KeyEventType.KeyUp
+                when (keyEvent.key) {
+                    Key.DirectionLeft, Key.A -> {
+                        if (isDown) keyLeftPressed = true else if (isUp) keyLeftPressed = false
+                        true
+                    }
+                    Key.DirectionRight, Key.D -> {
+                        if (isDown) keyRightPressed = true else if (isUp) keyRightPressed = false
+                        true
+                    }
+                    Key.Spacebar, Key.DirectionUp, Key.W -> {
+                        if (isDown && keyEvent.nativeKeyEvent.repeatCount == 0) {
+                            jumpPressed = true
+                            engine.triggerJump()
+                        } else if (isUp) {
+                            jumpPressed = false
+                        }
+                        true
+                    }
+                    Key.Escape, Key.P -> {
+                        if (isDown && keyEvent.nativeKeyEvent.repeatCount == 0) {
+                            togglePause()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
     ) {
         val isWide = maxWidth > maxHeight
+        val isCompactHeight = maxHeight < 460.dp
 
         if (isWide) {
             // Landscape / Tablet: Full-screen canvas with floating corner controls
@@ -147,21 +214,16 @@ fun GamePlayScreen(
                 GameCanvas(engine = engine, frameTick = frameTick, modifier = Modifier.fillMaxSize())
 
                 GameHudBar(
-                    level = level,
                     hud = hud,
-                    onPauseToggle = {
-                        engine.status = if (engine.status == GameStatus.PAUSED) {
-                            GameStatus.PLAYING
-                        } else if (engine.status == GameStatus.PLAYING) {
-                            GameStatus.PAUSED
-                        } else engine.status
-                        hud = engine.snapshot()
-                    },
+                    isLandscape = true,
+                    onPauseToggle = ::togglePause,
                     onRestart = ::restartLevel,
+                    onToggleOrientation = { toggleScreenOrientation(context, true) },
                     onExit = onExit,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(10.dp)
+                        .widthIn(max = 760.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 )
 
                 // Floating arcade controls in corners
@@ -169,13 +231,13 @@ fun GamePlayScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Bottom
                 ) {
                     DirectionalPad(
-                        leftPressed = leftPressed,
-                        rightPressed = rightPressed,
+                        leftPressed = leftPressed || keyLeftPressed,
+                        rightPressed = rightPressed || keyRightPressed,
                         onDirectionChanged = { l, r ->
                             leftPressed = l
                             rightPressed = r
@@ -208,17 +270,11 @@ fun GamePlayScreen(
                     )
 
                     GameHudBar(
-                        level = level,
                         hud = hud,
-                        onPauseToggle = {
-                            engine.status = if (engine.status == GameStatus.PAUSED) {
-                                GameStatus.PLAYING
-                            } else if (engine.status == GameStatus.PLAYING) {
-                                GameStatus.PAUSED
-                            } else engine.status
-                            hud = engine.snapshot()
-                        },
+                        isLandscape = false,
+                        onPauseToggle = ::togglePause,
                         onRestart = ::restartLevel,
+                        onToggleOrientation = { toggleScreenOrientation(context, false) },
                         onExit = onExit,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -298,6 +354,7 @@ fun GamePlayScreen(
                 hud = hud,
                 isPlaytest = isPlaytest,
                 hasNextCampaignLevel = hasNextCampaignLevel,
+                isCompactHeight = isCompactHeight,
                 onResume = {
                     engine.status = GameStatus.PLAYING
                     hud = engine.snapshot()
@@ -312,15 +369,16 @@ fun GamePlayScreen(
 
 @Composable
 private fun GameHudBar(
-    level: LevelData,
     hud: GameHudSnapshot,
+    isLandscape: Boolean,
     onPauseToggle: () -> Unit,
     onRestart: () -> Unit,
+    onToggleOrientation: () -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
-        color = NeonVoid.copy(alpha = 0.78f),
+        color = NeonVoid.copy(alpha = if (isLandscape) 0.70f else 0.78f),
         shape = RoundedCornerShape(16.dp),
         modifier = modifier
             .fillMaxWidth()
@@ -329,7 +387,7 @@ private fun GameHudBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 6.dp, vertical = if (isLandscape) 2.dp else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -362,7 +420,7 @@ private fun GameHudBar(
 
             // Center Stats
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 18.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -404,6 +462,18 @@ private fun GameHudBar(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onToggleOrientation,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("game_rotate_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ScreenRotation,
+                        contentDescription = if (isLandscape) "Cambiar a vertical" else "Jugar en horizontal",
+                        tint = NeonLime
+                    )
+                }
                 IconButton(
                     onClick = onRestart,
                     modifier = Modifier
@@ -580,6 +650,7 @@ private fun GameOverlayModal(
     hud: GameHudSnapshot,
     isPlaytest: Boolean,
     hasNextCampaignLevel: Boolean,
+    isCompactHeight: Boolean,
     onResume: () -> Unit,
     onRestart: () -> Unit,
     onNextLevel: () -> Unit,
@@ -596,8 +667,8 @@ private fun GameOverlayModal(
             colors = CardDefaults.cardColors(containerColor = NeonSurface),
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
-                .padding(24.dp)
-                .widthIn(max = 420.dp)
+                .padding(if (isCompactHeight) 12.dp else 24.dp)
+                .widthIn(max = if (isCompactHeight) 520.dp else 420.dp)
                 .fillMaxWidth()
                 .border(
                     width = 1.5.dp,
@@ -612,7 +683,8 @@ private fun GameOverlayModal(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(if (isCompactHeight) 16.dp else 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -621,7 +693,7 @@ private fun GameOverlayModal(
                         GameStatus.GAME_OVER -> "SISTEMA CAÍDO"
                         else -> "PAUSA"
                     },
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = if (isCompactHeight) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                     color = when (status) {
                         GameStatus.VICTORY -> NeonLime
                         GameStatus.GAME_OVER -> NeonCrimson
@@ -630,20 +702,20 @@ private fun GameOverlayModal(
                 )
 
                 if (status == GameStatus.VICTORY) {
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(if (isCompactHeight) 8.dp else 14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (s in 1..3) {
                             Icon(
                                 imageVector = if (s <= hud.earnedStars) Icons.Rounded.Star else Icons.Rounded.StarBorder,
                                 contentDescription = "Estrella $s",
                                 tint = if (s <= hud.earnedStars) NeonAmber else TextSecondary,
-                                modifier = Modifier.size(38.dp)
+                                modifier = Modifier.size(if (isCompactHeight) 30.dp else 38.dp)
                             )
                         }
                     }
 
                     if (isPlaytest) {
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Surface(
                             color = NeonLime.copy(alpha = 0.16f),
                             shape = RoundedCornerShape(10.dp),
@@ -669,7 +741,7 @@ private fun GameOverlayModal(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(if (isCompactHeight) 10.dp else 16.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
@@ -691,7 +763,7 @@ private fun GameOverlayModal(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(22.dp))
+                Spacer(modifier = Modifier.height(if (isCompactHeight) 14.dp else 22.dp))
 
                 if (status == GameStatus.PAUSED) {
                     Button(
@@ -700,12 +772,12 @@ private fun GameOverlayModal(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(48.dp)
                             .testTag("overlay_resume_button")
                     ) {
                         Text("Continuar", style = MaterialTheme.typography.titleMedium)
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 if (status == GameStatus.VICTORY && hasNextCampaignLevel) {
@@ -715,43 +787,81 @@ private fun GameOverlayModal(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(48.dp)
                             .testTag("overlay_next_button")
                     ) {
                         Text("Siguiente Sector", style = MaterialTheme.typography.titleMedium)
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (isCompactHeight) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onRestart,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (status == GameStatus.GAME_OVER) NeonCyan else NeonSurfaceVariant,
+                                contentColor = if (status == GameStatus.GAME_OVER) NeonVoid else TextPrimary
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("overlay_restart_button")
+                        ) {
+                            Text("Reintentar", style = MaterialTheme.typography.titleMedium)
+                        }
+
+                        OutlinedButton(
+                            onClick = onExit,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("overlay_exit_button")
+                        ) {
+                            Text(
+                                text = if (isPlaytest) "Volver al Editor" else "Salir al Menú",
+                                color = TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = onRestart,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (status == GameStatus.GAME_OVER) NeonCyan else NeonSurfaceVariant,
+                            contentColor = if (status == GameStatus.GAME_OVER) NeonVoid else TextPrimary
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("overlay_restart_button")
+                    ) {
+                        Text("Reintentar", style = MaterialTheme.typography.titleMedium)
+                    }
+
                     Spacer(modifier = Modifier.height(10.dp))
-                }
 
-                Button(
-                    onClick = onRestart,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (status == GameStatus.GAME_OVER) NeonCyan else NeonSurfaceVariant,
-                        contentColor = if (status == GameStatus.GAME_OVER) NeonVoid else TextPrimary
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("overlay_restart_button")
-                ) {
-                    Text("Reintentar", style = MaterialTheme.typography.titleMedium)
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedButton(
-                    onClick = onExit,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("overlay_exit_button")
-                ) {
-                    Text(
-                        text = if (isPlaytest) "Volver al Editor" else "Salir al Menú",
-                        color = TextPrimary
-                    )
+                    OutlinedButton(
+                        onClick = onExit,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("overlay_exit_button")
+                    ) {
+                        Text(
+                            text = if (isPlaytest) "Volver al Editor" else "Salir al Menú",
+                            color = TextPrimary
+                        )
+                    }
                 }
             }
         }

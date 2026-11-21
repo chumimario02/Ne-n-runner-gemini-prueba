@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,9 +24,12 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.AlertDialog
@@ -68,11 +73,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.example.ui.toggleScreenOrientation
 import com.example.model.Difficulty
 import com.example.model.LEVEL_GRID_HEIGHT
 import com.example.model.LevelData
@@ -105,6 +112,8 @@ fun LevelEditorScreen(
     onConnectCloud: (onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit
 ) {
     BackHandler(onBack = onExit)
+
+    val context = LocalContext.current
 
     var title by remember(initialLevel.id) { mutableStateOf(initialLevel.title) }
     var description by remember(initialLevel.id) { mutableStateOf(initialLevel.description) }
@@ -161,19 +170,208 @@ fun LevelEditorScreen(
         validationBanner = null
     }
 
-    Column(
+    fun handlePlaytest() {
+        val check = validateLevelGrid(rowsState, width)
+        if (check.isValid) {
+            onPlaytest(currentLevelData())
+        } else {
+            validationBanner = check.errorEs
+        }
+    }
+
+    fun handlePublish() {
+        val check = validateLevelGrid(rowsState, width)
+        if (!check.isValid) {
+            validationBanner = check.errorEs
+        } else if (title.trim().length < 2) {
+            validationBanner = "El nombre del mapa debe tener al menos 2 letras."
+            showSettingsDialog = true
+        } else if (isCloudConnected) {
+            onPublishOnline(currentLevelData())
+        } else {
+            cloudAuthError = null
+            showCloudPublishPrompt = true
+        }
+    }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(NeonVoid)
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        // Top Action Toolbar
-        Surface(
-            color = NeonSurface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, NeonCardBorder)
-        ) {
+        val isLandscape = maxWidth > maxHeight
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top Action Toolbar
+            Surface(
+                color = NeonSurface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, NeonCardBorder)
+            ) {
+                if (isLandscape) {
+                    // Single compact row in landscape so the grid gets maximum vertical space
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            IconButton(
+                                onClick = onExit,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("editor_back_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = "Salir del editor",
+                                    tint = TextPrimary
+                                )
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { showSettingsDialog = true }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = title.ifBlank { "Sin título" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (verified) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            imageVector = Icons.Rounded.Verified,
+                                            contentDescription = "Verificado",
+                                            tint = NeonLime,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "${difficulty.labelEs} · ${width}×$LEVEL_GRID_HEIGHT",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NeonCyan,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    if (undoStack.isNotEmpty()) {
+                                        rowsState = undoStack.removeAt(undoStack.lastIndex)
+                                        verified = false
+                                    }
+                                },
+                                enabled = undoStack.isNotEmpty(),
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("editor_undo_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.Undo,
+                                    contentDescription = "Deshacer",
+                                    tint = if (undoStack.isNotEmpty()) TextPrimary else TextSecondary.copy(alpha = 0.35f)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showSettingsDialog = true },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("editor_settings_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Tune,
+                                    contentDescription = "Configurar mapa",
+                                    tint = NeonCyan
+                                )
+                            }
+                            IconButton(
+                                onClick = { toggleScreenOrientation(context, true) },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("editor_rotate_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ScreenRotation,
+                                    contentDescription = "Cambiar a vertical",
+                                    tint = NeonLime
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = ::handlePlaytest,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("editor_playtest_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = NeonLime,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Probar", color = NeonLime, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { onSaveDraft(currentLevelData(), verified) },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("editor_save_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Save,
+                                    contentDescription = null,
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Guardar", color = NeonCyan, maxLines = 1)
+                            }
+                            Button(
+                                onClick = ::handlePublish,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeonMagenta,
+                                    contentColor = TextPrimary
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("editor_publish_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.CloudUpload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Publicar", maxLines = 1)
+                            }
+                        }
+                    }
+                } else {
             Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -249,6 +447,18 @@ fun LevelEditorScreen(
                             )
                         }
                         IconButton(
+                            onClick = { toggleScreenOrientation(context, false) },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("editor_rotate_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ScreenRotation,
+                                contentDescription = "Cambiar a horizontal",
+                                tint = NeonLime
+                            )
+                        }
+                        IconButton(
                             onClick = { showSettingsDialog = true },
                             modifier = Modifier
                                 .size(48.dp)
@@ -271,14 +481,7 @@ fun LevelEditorScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
-                        onClick = {
-                            val check = validateLevelGrid(rowsState, width)
-                            if (check.isValid) {
-                                onPlaytest(currentLevelData())
-                            } else {
-                                validationBanner = check.errorEs
-                            }
-                        },
+                        onClick = ::handlePlaytest,
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier
@@ -318,20 +521,7 @@ fun LevelEditorScreen(
                     }
 
                     Button(
-                        onClick = {
-                            val check = validateLevelGrid(rowsState, width)
-                            if (!check.isValid) {
-                                validationBanner = check.errorEs
-                            } else if (title.trim().length < 2) {
-                                validationBanner = "El nombre del mapa debe tener al menos 2 letras."
-                                showSettingsDialog = true
-                            } else if (isCloudConnected) {
-                                onPublishOnline(currentLevelData())
-                            } else {
-                                cloudAuthError = null
-                                showCloudPublishPrompt = true
-                            }
-                        },
+                        onClick = ::handlePublish,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = NeonMagenta,
                             contentColor = TextPrimary
@@ -353,33 +543,36 @@ fun LevelEditorScreen(
                     }
                 }
             }
-        }
-
-        if (validationBanner != null) {
-            Surface(
-                color = NeonCrimson.copy(alpha = 0.2f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, NeonCrimson.copy(alpha = 0.5f))
-            ) {
-                Text(
-                    text = validationBanner ?: "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = NeonCrimson,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                )
+                }
             }
-        }
 
-        // Minimap Camera Scroller Bar
-        Surface(
-            color = NeonSurfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .border(1.dp, NeonCardBorder, RoundedCornerShape(12.dp))
-        ) {
+            if (validationBanner != null) {
+                Surface(
+                    color = NeonCrimson.copy(alpha = 0.2f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, NeonCrimson.copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = validationBanner ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NeonCrimson,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    // Minimap Camera Scroller Bar
+                    Surface(
+                        color = NeonSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = if (isLandscape) 3.dp else 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, NeonCardBorder, RoundedCornerShape(12.dp))
+                    ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -465,40 +658,26 @@ fun LevelEditorScreen(
             }
         }
 
-        // Main Interactive Editor Grid Canvas
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 8.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .border(1.dp, NeonCyan.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                .background(NeonVoid)
-        ) {
-            var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-            var strokeRecorded by remember { mutableStateOf(false) }
+                // Main Interactive Editor Grid Canvas
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 8.dp, vertical = if (isLandscape) 4.dp else 0.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, NeonCyan.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                        .background(NeonVoid)
+                ) {
+                    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+                    var strokeRecorded by remember { mutableStateOf(false) }
 
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .onSizeChanged { canvasSize = it }
-                    .pointerInput(selectedTool, width, scrollColOffset) {
-                        detectTapGestures { offset ->
-                            if (canvasSize.height <= 0) return@detectTapGestures
-                            val tilePx = canvasSize.height / LEVEL_GRID_HEIGHT.toFloat()
-                            val visibleCols = canvasSize.width / tilePx
-                            val maxScroll = (width - visibleCols).coerceAtLeast(0f)
-                            val camCol = scrollColOffset.coerceIn(0f, maxScroll)
-                            val col = floor(camCol + offset.x / tilePx).toInt()
-                            val row = floor(offset.y / tilePx).toInt()
-                            paintCell(col, row, selectedTool, recordUndo = true)
-                        }
-                    }
-                    .pointerInput(selectedTool, width, scrollColOffset) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                strokeRecorded = false
-                                if (canvasSize.height > 0) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onSizeChanged { canvasSize = it }
+                            .pointerInput(selectedTool, width, scrollColOffset) {
+                                detectTapGestures { offset ->
+                                    if (canvasSize.height <= 0) return@detectTapGestures
                                     val tilePx = canvasSize.height / LEVEL_GRID_HEIGHT.toFloat()
                                     val visibleCols = canvasSize.width / tilePx
                                     val maxScroll = (width - visibleCols).coerceAtLeast(0f)
@@ -506,121 +685,129 @@ fun LevelEditorScreen(
                                     val col = floor(camCol + offset.x / tilePx).toInt()
                                     val row = floor(offset.y / tilePx).toInt()
                                     paintCell(col, row, selectedTool, recordUndo = true)
-                                    strokeRecorded = true
-                                }
-                            },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                if (canvasSize.height > 0) {
-                                    val tilePx = canvasSize.height / LEVEL_GRID_HEIGHT.toFloat()
-                                    val visibleCols = canvasSize.width / tilePx
-                                    val maxScroll = (width - visibleCols).coerceAtLeast(0f)
-                                    val camCol = scrollColOffset.coerceIn(0f, maxScroll)
-                                    val col = floor(camCol + change.position.x / tilePx).toInt()
-                                    val row = floor(change.position.y / tilePx).toInt()
-                                    paintCell(col, row, selectedTool, recordUndo = !strokeRecorded)
-                                    strokeRecorded = true
                                 }
                             }
-                        )
+                            .pointerInput(selectedTool, width, scrollColOffset) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        strokeRecorded = false
+                                        if (canvasSize.height > 0) {
+                                            val tilePx = canvasSize.height / LEVEL_GRID_HEIGHT.toFloat()
+                                            val visibleCols = canvasSize.width / tilePx
+                                            val maxScroll = (width - visibleCols).coerceAtLeast(0f)
+                                            val camCol = scrollColOffset.coerceIn(0f, maxScroll)
+                                            val col = floor(camCol + offset.x / tilePx).toInt()
+                                            val row = floor(offset.y / tilePx).toInt()
+                                            paintCell(col, row, selectedTool, recordUndo = true)
+                                            strokeRecorded = true
+                                        }
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        if (canvasSize.height > 0) {
+                                            val tilePx = canvasSize.height / LEVEL_GRID_HEIGHT.toFloat()
+                                            val visibleCols = canvasSize.width / tilePx
+                                            val maxScroll = (width - visibleCols).coerceAtLeast(0f)
+                                            val camCol = scrollColOffset.coerceIn(0f, maxScroll)
+                                            val col = floor(camCol + change.position.x / tilePx).toInt()
+                                            val row = floor(change.position.y / tilePx).toInt()
+                                            paintCell(col, row, selectedTool, recordUndo = !strokeRecorded)
+                                            strokeRecorded = true
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
+                        val tilePx = size.height / LEVEL_GRID_HEIGHT.toFloat()
+                        val visibleCols = size.width / tilePx
+                        val maxScroll = (width - visibleCols).coerceAtLeast(0f)
+                        val camCol = scrollColOffset.coerceIn(0f, maxScroll)
+
+                        val startCol = floor(camCol).toInt().coerceAtLeast(0)
+                        val endCol = (startCol + visibleCols.toInt() + 2).coerceAtMost(width - 1)
+
+                        // Grid lines
+                        for (r in 0..LEVEL_GRID_HEIGHT) {
+                            val y = r * tilePx
+                            drawLine(
+                                color = NeonCardBorder.copy(alpha = 0.45f),
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
+                                strokeWidth = 1f
+                            )
+                        }
+                        for (c in startCol..endCol + 1) {
+                            val x = (c - camCol) * tilePx
+                            drawLine(
+                                color = NeonCardBorder.copy(alpha = 0.45f),
+                                start = Offset(x, 0f),
+                                end = Offset(x, size.height),
+                                strokeWidth = 1f
+                            )
+                        }
+
+                        // Draw placed tiles
+                        for (r in 0 until LEVEL_GRID_HEIGHT) {
+                            val rowStr = rowsState[r]
+                            for (c in startCol..endCol) {
+                                val ch = rowStr[c]
+                                if (ch == '.') continue
+                                val x = (c - camCol) * tilePx
+                                val y = r * tilePx
+                                drawEditorTile(ch, x, y, tilePx)
+                            }
+                        }
                     }
-            ) {
-                val tilePx = size.height / LEVEL_GRID_HEIGHT.toFloat()
-                val visibleCols = size.width / tilePx
-                val maxScroll = (width - visibleCols).coerceAtLeast(0f)
-                val camCol = scrollColOffset.coerceIn(0f, maxScroll)
-
-                val startCol = floor(camCol).toInt().coerceAtLeast(0)
-                val endCol = (startCol + visibleCols.toInt() + 2).coerceAtMost(width - 1)
-
-                // Grid lines
-                for (r in 0..LEVEL_GRID_HEIGHT) {
-                    val y = r * tilePx
-                    drawLine(
-                        color = NeonCardBorder.copy(alpha = 0.45f),
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1f
-                    )
                 }
-                for (c in startCol..endCol + 1) {
-                    val x = (c - camCol) * tilePx
-                    drawLine(
-                        color = NeonCardBorder.copy(alpha = 0.45f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 1f
-                    )
                 }
 
-                // Draw placed tiles
-                for (r in 0 until LEVEL_GRID_HEIGHT) {
-                    val rowStr = rowsState[r]
-                    for (c in startCol..endCol) {
-                        val ch = rowStr[c]
-                        if (ch == '.') continue
-                        val x = (c - camCol) * tilePx
-                        val y = r * tilePx
-                        drawEditorTile(ch, x, y, tilePx)
+                if (isLandscape) {
+                    // Right-hand Vertical Tile Palette in landscape for maximum canvas height
+                    Surface(
+                        color = NeonSurface,
+                        modifier = Modifier
+                            .width(88.dp)
+                            .fillMaxHeight()
+                            .border(1.dp, NeonCardBorder)
+                    ) {
+                        LazyColumn(
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            items(TileType.entries) { tool ->
+                                EditorToolItem(
+                                    tool = tool,
+                                    isSelected = selectedTool == tool,
+                                    onSelect = { selectedTool = tool },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        // Bottom Tile Palette
-        Surface(
-            color = NeonSurface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 6.dp)
-                .border(1.dp, NeonCardBorder)
-        ) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(TileType.entries) { tool ->
-                    val isSelected = selectedTool == tool
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(
-                                if (isSelected) tool.color.copy(alpha = 0.22f) else NeonSurfaceVariant
-                            )
-                            .border(
-                                width = if (isSelected) 2.dp else 1.dp,
-                                color = if (isSelected) tool.color else NeonCardBorder,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable { selectedTool = tool }
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .testTag("tool_${tool.name.lowercase()}")
+            if (!isLandscape) {
+                // Bottom Tile Palette in portrait
+                Surface(
+                    color = NeonSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .border(1.dp, NeonCardBorder)
+                ) {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(
-                                    if (tool == TileType.EMPTY) NeonVoid else tool.color.copy(alpha = 0.85f)
-                                )
-                                .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = if (tool == TileType.EMPTY) "×" else tool.code.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (tool == TileType.EMPTY) TextSecondary else NeonVoid,
-                                fontWeight = FontWeight.Bold
+                        items(TileType.entries) { tool ->
+                            EditorToolItem(
+                                tool = tool,
+                                isSelected = selectedTool == tool,
+                                onSelect = { selectedTool = tool }
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = tool.shortLabelEs,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isSelected) TextPrimary else TextSecondary,
-                            maxLines = 1
-                        )
                     }
                 }
             }
@@ -635,7 +822,10 @@ fun LevelEditorScreen(
                 Text("Configurar Mapa", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { if (it.length <= 40) title = it },
@@ -749,6 +939,57 @@ fun LevelEditorScreen(
                     Text("Solo guardar local", color = TextSecondary)
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun EditorToolItem(
+    tool: TileType,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (isSelected) tool.color.copy(alpha = 0.22f) else NeonSurfaceVariant
+            )
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) tool.color else NeonCardBorder,
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .testTag("tool_${tool.name.lowercase()}")
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    if (tool == TileType.EMPTY) NeonVoid else tool.color.copy(alpha = 0.85f)
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (tool == TileType.EMPTY) "×" else tool.code.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (tool == TileType.EMPTY) TextSecondary else NeonVoid,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = tool.shortLabelEs,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isSelected) TextPrimary else TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
