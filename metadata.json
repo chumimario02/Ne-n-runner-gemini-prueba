@@ -1,0 +1,8 @@
+{
+  "name": "Remix Neon Runner",
+  "description": "Build, play, and share challenging platformer levels with custom obstacles in this fast-paced neon world.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

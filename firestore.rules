@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidDifficulty(val) {
+      return val is string && val in ['EASY', 'MEDIUM', 'HARD', 'EXTREME'];
+    }
+
+    function isValidGrid(data) {
+      return data.width is int && data.width >= 24 && data.width <= 64 &&
+             data.height is int && data.height == 14 &&
+             data.gridRows is list && data.gridRows.size() == 14 &&
+             data.gridRows[0] is string && data.gridRows[0].size() == data.width;
+    }
+
+    function isValidProgress(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.levelIndex is int && data.levelIndex >= 0 && data.levelIndex <= 50 &&
+             data.completed is bool &&
+             data.stars is int && data.stars >= 0 && data.stars <= 3 &&
+             data.bestTimeMs is int && data.bestTimeMs >= 0 && data.bestTimeMs <= 86400000 &&
+             data.bestScore is int && data.bestScore >= 0 && data.bestScore <= 10000000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidDraft(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 40 &&
+             data.description is string && data.description.size() <= 160 &&
+             isValidDifficulty(data.difficulty) &&
+             isValidGrid(data) &&
+             data.verified is bool &&
+             (!('publishedLevelId' in data) || (data.publishedLevelId is string && data.publishedLevelId.size() <= 128)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCommunityLevel(data) {
+      return data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
+             data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 40 &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 40 &&
+             data.description is string && data.description.size() <= 160 &&
+             isValidDifficulty(data.difficulty) &&
+             isValidGrid(data) &&
+             data.verified is bool &&
+             data.published is bool &&
+             data.playsCount is int && data.playsCount >= 0 &&
+             data.likesCount is int && data.likesCount >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/progress/{levelId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(levelId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(levelId) &&
+                       incoming().keys().hasAll(['userId', 'levelIndex', 'completed', 'stars', 'bestTimeMs', 'bestScore', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'levelIndex', 'completed', 'stars', 'bestTimeMs', 'bestScore', 'createdAt', 'updatedAt']) &&
+                       isValidProgress(incoming(), userId);
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(levelId) &&
+                       isValidProgress(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().levelIndex == existing().levelIndex &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['completed', 'stars', 'bestTimeMs', 'bestScore', 'updatedAt']);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(levelId);
+    }
+
+    match /users/{userId}/drafts/{draftId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(draftId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(draftId) &&
+                       incoming().keys().hasAll(['userId', 'title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'publishedLevelId', 'createdAt', 'updatedAt']) &&
+                       isValidDraft(incoming(), userId);
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(draftId) &&
+                       isValidDraft(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'publishedLevelId', 'updatedAt']);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(draftId);
+    }
+
+    match /community_levels/{levelId} {
+      allow get: if isSignedIn() && isValidId(levelId) && (existing().published == true || existing().authorId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().published == true || existing().authorId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(levelId) &&
+                       incoming().authorId == request.auth.uid &&
+                       incoming().keys().hasAll(['authorId', 'authorName', 'title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'published', 'playsCount', 'likesCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['authorId', 'authorName', 'title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'published', 'playsCount', 'likesCount', 'createdAt', 'updatedAt']) &&
+                       incoming().playsCount == 0 &&
+                       incoming().likesCount == 0 &&
+                       isValidCommunityLevel(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(levelId) &&
+                       isValidCommunityLevel(incoming()) &&
+                       incoming().authorId == existing().authorId &&
+                       incoming().createdAt == existing().createdAt && (
+                         (
+                           existing().authorId == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['authorName', 'title', 'description', 'difficulty', 'width', 'height', 'gridRows', 'verified', 'published', 'updatedAt'])
+                         ) || (
+                           existing().published == true &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['playsCount', 'updatedAt']) &&
+                           incoming().playsCount == existing().playsCount + 1
+                         ) || (
+                           existing().published == true &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt']) && (
+                             (
+                               incoming().likesCount == existing().likesCount + 1 &&
+                               existsAfter(/databases/$(database)/documents/community_levels/$(levelId)/likes/$(request.auth.uid))
+                             ) || (
+                               incoming().likesCount == existing().likesCount - 1 &&
+                               incoming().likesCount >= 0 &&
+                               !existsAfter(/databases/$(database)/documents/community_levels/$(levelId)/likes/$(request.auth.uid))
+                             )
+                           )
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(levelId) && existing().authorId == request.auth.uid;
+
+      match /likes/{likerId} {
+        allow get: if isSignedIn() && isValidId(levelId) && isValidId(likerId) && request.auth.uid == likerId;
+        allow list: if isSignedIn() && request.auth.uid == likerId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(levelId) &&
+                         isValidId(likerId) &&
+                         request.auth.uid == likerId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'createdAt']) &&
+                         incoming().createdAt is timestamp &&
+                         incoming().createdAt <= request.time &&
+                         getAfter(/databases/$(database)/documents/community_levels/$(levelId)).data.likesCount ==
+                           get(/databases/$(database)/documents/community_levels/$(levelId)).data.likesCount + 1;
+
+        allow delete: if isSignedIn() &&
+                         isValidId(levelId) &&
+                         isValidId(likerId) &&
+                         request.auth.uid == likerId &&
+                         getAfter(/databases/$(database)/documents/community_levels/$(levelId)).data.likesCount ==
+                           get(/databases/$(database)/documents/community_levels/$(levelId)).data.likesCount - 1;
+      }
+    }
+  }
+}

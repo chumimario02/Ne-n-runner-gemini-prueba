@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "CampaignProgress": {
+      "title": "CampaignProgress",
+      "description": "Tracks a user's completion, stars, best time, and high score for a progressive campaign level.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "levelIndex": { "type": "integer", "description": "Zero-based campaign level index." },
+        "completed": { "type": "boolean", "description": "Whether the player cleared the level." },
+        "stars": { "type": "integer", "description": "Star rating earned (0 to 3)." },
+        "bestTimeMs": { "type": "integer", "description": "Fastest completion time in milliseconds." },
+        "bestScore": { "type": "integer", "description": "Highest score achieved on the level." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of first record." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update." }
+      },
+      "required": ["userId", "levelIndex", "completed", "stars", "bestTimeMs", "bestScore", "createdAt", "updatedAt"]
+    },
+    "CustomDraft": {
+      "title": "CustomDraft",
+      "description": "A user-created custom platformer map saved in their personal cloud workshop.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Creator Firebase Auth UID." },
+        "title": { "type": "string", "description": "Map display title." },
+        "description": { "type": "string", "description": "Short map description." },
+        "difficulty": { "type": "string", "enum": ["EASY", "MEDIUM", "HARD", "EXTREME"] },
+        "width": { "type": "integer", "description": "Grid width in tiles (24-64)." },
+        "height": { "type": "integer", "description": "Grid height in tiles (14)." },
+        "gridRows": { "type": "array", "description": "14 row strings encoding tile characters." },
+        "verified": { "type": "boolean", "description": "True if creator beat the level in playtest." },
+        "publishedLevelId": { "type": "string", "description": "Optional linked community_levels document ID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last save." }
+      },
+      "required": ["userId", "title", "description", "difficulty", "width", "height", "gridRows", "verified", "createdAt", "updatedAt"]
+    },
+    "CommunityLevel": {
+      "title": "CommunityLevel",
+      "description": "A published user-created platformer map shared online with the Neon Runner community.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string", "description": "Creator Firebase Auth UID." },
+        "authorName": { "type": "string", "description": "Creator public display name (non-PII)." },
+        "title": { "type": "string", "description": "Map display title." },
+        "description": { "type": "string", "description": "Map description." },
+        "difficulty": { "type": "string", "enum": ["EASY", "MEDIUM", "HARD", "EXTREME"] },
+        "width": { "type": "integer", "description": "Grid width in tiles (24-64)." },
+        "height": { "type": "integer", "description": "Grid height in tiles (14)." },
+        "gridRows": { "type": "array", "description": "14 row strings encoding tile characters." },
+        "verified": { "type": "boolean", "description": "Whether the creator verified beatability." },
+        "published": { "type": "boolean", "description": "Whether the level is publicly listed." },
+        "playsCount": { "type": "integer", "description": "Total play count." },
+        "likesCount": { "type": "integer", "description": "Total community likes." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of publish." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of update." }
+      },
+      "required": ["authorId", "authorName", "title", "description", "difficulty", "width", "height", "gridRows", "verified", "published", "playsCount", "likesCount", "createdAt", "updatedAt"]
+    },
+    "LevelLike": {
+      "title": "LevelLike",
+      "description": "Per-user like marker for a community level.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who liked the level." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/progress/{levelId}": {
+      "schema": { "$ref": "#/entities/CampaignProgress" },
+      "description": "Per-user progressive campaign level stats."
+    },
+    "/users/{userId}/drafts/{draftId}": {
+      "schema": { "$ref": "#/entities/CustomDraft" },
+      "description": "Per-user private level editor drafts."
+    },
+    "/community_levels/{levelId}": {
+      "schema": { "$ref": "#/entities/CommunityLevel" },
+      "description": "Published user-created levels shared online."
+    },
+    "/community_levels/{levelId}/likes/{likerId}": {
+      "schema": { "$ref": "#/entities/LevelLike" },
+      "description": "Per-user like records synchronized atomically with community level likesCount."
+    }
+  }
+}
